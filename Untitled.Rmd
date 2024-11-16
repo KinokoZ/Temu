@@ -1,0 +1,164 @@
+---
+title: "task"
+author: "Jinran Li"
+date: "2024-11-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+
+library(dplyr)
+```
+
+
+
+```{r cars}
+data <- read.csv("temu_product_sales_dataset.csv")
+```
+
+
+```{r}
+#check the NA
+sapply(data,function(x) sum(is.na(x)))
+```
+```{r}
+head(data)
+```
+
+```{r}
+#to see how many category and how many product  we have in level 1
+table(data$leve_1_category_name)
+
+```
+```{r}
+# same as previes
+table(data$leve_2_category_name)
+```
+```{r}
+# Level 2 categroy counts eda 
+category_counts <- data %>%
+  count(leve_2_category_name, name = "category_count")
+ggplot(data, aes(x=leve_1_category_name))+
+  geom_bar()+
+  labs(title= "lv1 category", x="category",y="numbers")+
+    theme(axis.text.x= element_text(angle=90, hjust=1)
+  )
+
+```
+
+```{r}
+
+ggplot(data, aes(x=leve_2_category_name))+
+  geom_bar()+
+  labs(title= "lv2 category", x="category",y="numbers")+
+    theme(axis.text.x= element_text(angle=90, hjust=1)
+  )
+
+```
+
+```{r}
+
+category_counts <- data %>%
+  count(leve_2_category_name, name = "category_count")
+
+
+
+category_counts <- category_counts %>%
+  mutate(category_group = case_when(
+    
+    category_count < 100 ~ "lv0",
+    category_count < 200 ~ "lv1",
+    category_count >= 200 & category_count <= 500 ~ "lv2",
+    category_count >= 501 & category_count <= 1000 ~ "lv3",
+    category_count > 1000 ~ "lv4"
+  ))
+
+# Plot for lv0
+ggplot(category_counts %>% filter(category_group == "lv0"),
+       aes(x = reorder(leve_2_category_name, category_count), y = category_count)) +
+  geom_bar(stat = "identity", fill = "black") +
+  labs(title = "Numbers less than 100", x = "Level 0 Category", y = "Numbers") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Plot for lv1
+ggplot(category_counts %>% filter(category_group == "lv1"),
+       aes(x = reorder(leve_2_category_name, category_count), y = category_count)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Numbers less than 200", x = "Level 2 Category", y = "Numbers") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Plot for lv2
+ggplot(category_counts %>% filter(category_group == "lv2"),
+       aes(x = reorder(leve_2_category_name, category_count), y = category_count)) +
+  geom_bar(stat = "identity", fill = "green") +
+  labs(title = "Numbers between 200 and 500", x = "Level 2 Category", y = "Numbers") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Plot for lv3
+ggplot(category_counts %>% filter(category_group == "lv3"),
+       aes(x = reorder(leve_2_category_name, category_count), y = category_count)) +
+  geom_bar(stat = "identity", fill = "gray") +
+  labs(title = "Numbers between 500 and 1000", x = "Level 3 Category", y = "Numbers") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(category_counts %>% filter(category_group == "lv4"),
+       aes(x = reorder(leve_2_category_name, category_count), y = category_count)) +
+  geom_bar(stat = "identity", fill = "red") +
+  labs(title = "Numbers greater than 1000", x = "Level 4 Category", y = "Numbers") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+        
+       
+       
+       
+```
+
+
+```{r}
+category_sales <- data %>%
+  group_by(leve_1_category_name, leve_2_category_name) %>%
+  summarise(total_sales_volume = sum(sales_volume, na.rm = TRUE),
+            mean_sales_volume = mean(sales_volume, na.rm = TRUE),
+            median_sales_volume = median(sales_volume, na.rm = TRUE)) %>%
+  ungroup()
+
+ggplot(category_sales, aes(x = reorder(leve_1_category_name, total_sales_volume), y = total_sales_volume)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "whole sales in level1 ", x = "level 1", y = "sales") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+# Step 1: 统计每个二级类别的商品数量
+category_counts <- data %>%
+  count(leve_2_category_name, name = "category_count")
+
+# Step 2: 获取商品数量大于1000的二级类别名称
+high_count_category_names <- category_counts %>%
+  filter(category_count > 1000) %>%
+  pull(leve_2_category_name)
+
+# Step 3: 从原始数据中过滤这些高需求的二级类别商品，然后计算总销售量
+category_sales_lv2_high <- data %>%
+  filter(leve_2_category_name %in% high_count_category_names) %>%
+  group_by(leve_2_category_name) %>%
+  summarise(total_sales_volume = sum(sales_volume, na.rm = TRUE),
+            mean_sales_volume = mean(sales_volume, na.rm = TRUE),
+            median_sales_volume = median(sales_volume, na.rm = TRUE)) %>%
+  ungroup()
+
+# Step 4: 可视化这些高需求的二级类别的总销售量
+ggplot(category_sales_lv2_high, aes(x = reorder(leve_2_category_name, total_sales_volume), y = total_sales_volume)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  labs(title = "总销售量在二级类别（商品数量大于1000）", x = "二级类别", y = "总销售量") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+```{r}
+
+```
+
+
+
