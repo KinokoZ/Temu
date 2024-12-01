@@ -157,8 +157,156 @@ ggplot(category_sales_lv2_high, aes(x = reorder(leve_2_category_name, total_sale
 ```
 
 ```{r}
+data <- data %>%
+  mutate(revenue = price * sales_volume)
+
+# 查看新增列后的数据结构
+head(data)
+```
+```{r}
+data <- data %>%
+  mutate(price = as.numeric(price),
+         sales_volume = as.numeric(sales_volume))
+
+data <- data %>%
+  filter(!is.na(price) & !is.na(sales_volume))
+```
+
+```{r}
+revenue_level1 <- data %>%
+  group_by(leve_1_category_name) %>%
+  summarise(total_revenue = sum(revenue, na.rm = TRUE)) %>%
+  ungroup()
+
+# 按二级类别汇总收入
+revenue_level2 <- data %>%
+  group_by(leve_2_category_name) %>%
+  summarise(total_revenue = sum(revenue, na.rm = TRUE)) %>%
+  ungroup()
+```
+
+```{r}
+
+top_revenue_level1 <- revenue_level1 %>%
+  top_n(10, total_revenue)
+
+
+# 一级类别收入分布图
+ggplot(top_revenue_level1, aes(x = reorder(leve_1_category_name, total_revenue), y = total_revenue)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "收入排名前10的一级类别", x = "一级类别", y = "总收入") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+top_revenue_level2 <- revenue_level2 %>%
+  top_n(10, total_revenue)
+
+# 二级类别收入分布图（前10名）
+ggplot(top_revenue_level2, aes(x = reorder(leve_2_category_name, total_revenue), y = total_revenue)) +
+  geom_bar(stat = "identity", fill = "red") +
+  labs(title = "收入排名前10的二级类别", x = "二级类别", y = "总收入") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+2. 消费模式的初步洞察
+从模型中可以得出以下消费者的消费模式：
+
+价格的影响较大：
+
+每单位价格增加带来的收入增长（16.37）高于每单位销售量增加的贡献（1.88）。
+这可能表明高价商品对整体收入的贡献更为显著，反映了 Temu 的消费模式可能偏向于高价商品。
+销量对收入的影响稳定：
+
+虽然单位销售量的影响较小（1.88），但由于某些商品销量较大，其累计效应可能较高。
+高销量商品虽然单价较低，但通过规模效应仍对收入有重要贡献。
+变量的相互独立性：
+
+当前模型假设 price 和 sales_volume 是独立影响收入的，未考虑两者的潜在交互作用。
+例如，高价商品可能销量低，而低价商品销量高。若考虑交互项，可能会揭示更复杂的消费模式。
+```{r}
+
+  
+# 线性模型：预测收入
+model_lm <- lm(revenue ~ price + sales_volume, data = data)
+
+# 输出模型摘要
+summary(model_lm)
+
+
+# 可视化实际值与预测值的对比
+predicted_lm <- predict(model_lm, data)
+ggplot(data, aes(x = revenue, y = predicted_lm)) +
+  geom_point(color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Linear Model: Actual vs Predicted", x = "Actual Revenue", y = "Predicted Revenue")
+
 
 ```
+```{r}
+# 创建高需求类别变量
+threshold <- quantile(data$revenue, 0.8)  # 前20%作为高需求类别
+data <- data %>%
+  mutate(high_demand = ifelse(revenue > threshold, 1, 0))
+
+# 逻辑回归模型
+model_logistic <- glm(high_demand ~ price + sales_volume, data = data, family = binomial())
+summary(model_logistic)
+  
+
+```
+```{r}
+library(AER)
+dispersiontest(model_glm)
+```
+
+
+
+```{r}
+# GLM 模型：Poisson 回归预测销售量
+model_glm <- glm(sales_volume ~ price + leve_2_category_name, data = data, family = poisson())
+summary(model_glm)
+
+# 预测并可视化销售量
+predicted_glm <- predict(model_glm, data, type = "response")
+ggplot(data, aes(x = sales_volume, y = predicted_glm)) +
+  geom_point(color = "green") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "GLM: Actual vs Predicted Sales Volume", x = "Actual Sales Volume", y = "Predicted Sales Volume")
+
+```
+```{r}
+# 检查自变量和因变量的统计信息
+summary(data$sales_volume)
+summary(data$price)
+
+# 检查是否有缺失值
+any(is.na(data$sales_volume))
+any(is.na(data$price))
+
+# 排除异常值（如销售量和价格中的极端值）
+data <- data %>%
+  filter(sales_volume > 0 & price > 0) %>%
+  filter(sales_volume < quantile(sales_volume, 0.99), 
+         price < quantile(price, 0.99))
+
+library(MASS)
+model_nb <- glm.nb(sales_volume ~ price + leve_2_category_name, data = data)
+summary(model_nb)
+```
+
+
+```{r}
+library(lme4)
+
+# 混合效应模型
+model_lmer <- lmer(revenue ~ price + sales_volume + (1 | leve_2_category_name), data = data)
+summary(model_lmer)
+
+# 提取随机效应
+ranef(model_lmer)
+```
+
+
 
 
 
