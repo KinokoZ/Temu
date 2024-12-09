@@ -1,0 +1,706 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+---
+title: "task"
+author: "Jinran Li"
+date: "2024-12-10"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggcorrplot)
+library(ggplot2)
+library(GGally)
+library(tidyr)
+library(dplyr)
+library(lme4)
+library(MASS)
+
+```
+
+
+
+Data Processing
+
+```{r cars}
+data <- read.csv("temu_product_sales_dataset.csv")
+```
+
+1.1 check the Na
+```{r}
+#check the NA
+sapply(data,function(x) sum(is.na(x)))
+```
+Because the NA values are so large, there are 14,119 rating and review NA values, which is a huge amount of data, I've scratched the NA values into a new column, which is available below to exwplore why customers don't want to rate scores
+```{r}
+#Creating Grouping Variables
+data <- data %>%
+  mutate(goods_score_group = case_when(
+    is.na(goods_score) ~ "NA",          # NA
+    goods_score <= 4.5 ~ "Low Score",      # Lowrating (<4.5)
+    goods_score >4.5 ~ "High Score"     # Highrating (>4.5)
+  ))
+
+
+ggplot(data, aes(x = goods_score_group, fill = goods_score_group)) +
+  geom_bar(alpha = 0.7) +
+  labs(
+    title = "Distribution of Goods Score Groups",
+    x = "Goods Score Group",
+    y = "Count"
+  ) +
+  scale_fill_manual(values = c("skyblue", "orange", "grey")) +
+  theme_minimal()
+
+```
+```{r}
+# Extract Low Score data
+low_score_data <- data %>%
+  filter(goods_score_group == "Low Score")
+
+# Extract High Score data
+high_score_data <- data %>%
+  filter(goods_score_group == "High Score")
+
+# Extract NA data
+na_score_data <- data %>%
+  filter(goods_score_group == "NA")
+
+data <- data %>%
+  mutate(
+    low_score = ifelse(goods_score_group == "Low Score", 1, 0),
+    high_score = ifelse(goods_score_group == "High Score", 1, 0),
+    na_score = ifelse(goods_score_group == "NA", 1, 0)
+  )
+
+
+```
+
+
+1.1.2Delete all the na value after i filled NA value into a new column
+I also removed the sales_valume for the next observation.
+```{r}
+data <- data %>% na.omit()
+
+# check if there are still missing values
+sapply(data, function(x) sum(is.na(x)))
+```
+
+1.2 Basci information
+
+to see how many category and how many product  we have in level 1
+```{r}
+
+table(data$leve_1_category_name)
+
+```
+
+1.2.1same as previes
+```{r}
+length(unique(data$leve_2_category_name))
+
+table(data$leve_2_category_name)
+
+
+```
+1.3 revenue 
+
+Create a new column sales revenue
+```{r}
+data <- data %>%
+  mutate(revenue = price * sales_volume)
+# Viewing the data structure after adding a new column
+head(data)
+```
+1.3.1 check the na
+```{r}
+data <- data %>%
+  mutate(price = as.numeric(price),
+         sales_volume = as.numeric(sales_volume))
+
+data <- data %>%
+  filter(!is.na(price) & !is.na(sales_volume))
+```
+
+
+
+EDA
+
+2.1 Correlation Matrix
+
+The correlation matrix shows a weak linear relationship between the variables, with only sales_volume showing a slight positive correlation with comment_num (0.21) and a weak negative correlation with price (-0.08)
+```{r}
+numeric_vars <- data[, c("sales_volume", "price", "goods_score", "comment_num")]
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+
+# Heat map the correlation matrix
+ggcorrplot::ggcorrplot(cor_matrix, lab = TRUE, title = "Correlation Matrix")
+```
+
+2.2  distribution
+
+
+shows the distribution of sales by level 1 category. Each red dot represents the sales volume of one product, the horizontal axis represents the sales volume, and the vertical axis lists the categories.
+
+```{r}
+ggplot(data, aes(x = reorder(leve_1_category_name, sales_volume, FUN = median), y = sales_volume)) +
+  geom_boxplot(outlier.color = "red", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Sales Volume Distribution by Level 1 Category",
+       x = "Level 1 Category", y = "Sales Volume") +
+  theme_minimal()
+```
+2.2.1 lv2 Sales volume distribution
+
+ shows the distribution of sales volume for the top 20 secondary categories, providing a more detailed view of product performance within the subcategories. Each red dot represents the sales volume of one product, with categories such as “Women's Slippers” and “Headphones, Earbuds & Accessories” having the highest sales volume, including outliers of over 30,000 units.
+
+```{r}
+# Top 20 high-demand categories by total sales volume
+top_level2 <- data %>%
+  group_by(leve_2_category_name) %>%
+  summarise(total_sales = sum(sales_volume, na.rm = TRUE)) %>%
+  arrange(desc(total_sales)) %>%
+  slice_head(n = 20)  # Get the first 20 categories
+
+# Filter out the top 20 categories
+filtered_data <- data %>%
+  filter(leve_2_category_name %in% top_level2$leve_2_category_name)
+
+# Box line plots showing distribution of sales in high demand categories
+ggplot(filtered_data, aes(x = reorder(leve_2_category_name, sales_volume, FUN = median), y = sales_volume)) +
+  geom_boxplot(outlier.color = "red", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Sales Volume Distribution for Top 20 Level 2 Categories",
+       x = "Level 2 Category", y = "Sales Volume") +
+  theme_minimal()
+```
+
+2.2.2 Price, Score , Comment_num
+
+
+The distribution of prices and reviews is highly right-skewed, with most item prices and reviews clustered in the lower range and a small number of items with higher prices and reviews.
+
+The distribution of item ratings is relatively concentrated, with most items rated in the higher range, showing more consistent user ratings.
+
+
+```{r}
+ggplot(data, aes(x = price)) +
+  geom_histogram(binwidth = 5, fill = "red", alpha = 0.7) +
+  labs(title = "Distribution of Price ", x = "Price", y = "Frequency")
+
+
+ggplot(data, aes(x = comment_num)) +
+  geom_histogram(binwidth = 50, fill = "red", alpha = 0.7) +
+  labs(title = "Distribution of Comment Number ", x = "Comment Number", y = "Frequency")
+
+ggplot(data, aes(x = goods_score)) +
+  geom_histogram(binwidth = 0.1, fill = "red", alpha = 0.7) +
+  labs(title = "Distribution of Goods Score ", x = "Goods Score", y = "Frequency")
+
+```
+
+
+2.3 Boxplot
+
+Boxplot of Price:
+The price distribution shows a concentration of values near the lower range with numerous outliers extending far beyond the upper whisker, indicating a heavily right-skewed distribution with a few very high-priced items.
+
+Boxplot of Comment Number:
+Most products have a low number of comments, with several extreme outliers indicating a small subset of products receiving a significantly higher number of comments compared to the majority.
+
+Boxplot of Goods Score:
+The goods score distribution is tightly clustered near the higher range (around 5), with some lower outliers, suggesting most products are rated highly with only a few exceptions.
+```{r}
+  # Boxplot of Price
+ggplot(data, aes(y = price)) +
+  geom_boxplot(fill = "blue", alpha = 0.5) +
+  labs(title = "Boxplot of Price", y = "Price")
+
+# Boxplot of Comment number
+ggplot(data, aes(y = comment_num)) +
+  geom_boxplot(fill = "green", alpha = 0.5) +
+  labs(title = "Boxplot of Comment Number", y = "Comment Number")
+
+# Boxplot of Score
+ggplot(data, aes(y = goods_score)) +
+  geom_boxplot(fill = "orange", alpha = 0.5) +
+  labs(title = "Boxplot of Goods Score", y = "Goods Score")
+```
+
+2.3.1   Scatterplot
+
+Outliers in Price:
+The scatterplot shows that most prices are clustered near the lower range, with several extreme outliers above 100, and a few even exceeding 400. These outliers could significantly influence model predictions and should be addressed, potentially through transformation or robust modeling techniques.
+
+Outliers in Comment Number:
+Comment numbers are widely distributed, with most values under 1000, but several extreme outliers exceed 2000 and even 3000. These extreme values indicate high engagement for a few products, which may disproportionately impact models sensitive to outliers.
+
+Outliers in Goods Score:
+Goods scores are concentrated around 4-5, with scattered outliers as low as 1. This indicates that most products are rated highly, with only a small proportion receiving low scores. The limited variability might reduce the ability to predict meaningful differences.
+
+
+```{r}
+
+
+detect_outliers <- function(data, column) {
+  Q1 <- quantile(data[[column]], 0.25, na.rm = TRUE)
+  Q3 <- quantile(data[[column]], 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  outliers <- data %>%
+    filter(data[[column]] < lower_bound | data[[column]] > upper_bound)
+  return(outliers)
+}
+
+# Extract price outliers
+outliers_price <- detect_outliers(data, "price")
+
+# Extract comment_num exceptions
+outliers_comment <- detect_outliers(data, "comment_num")
+
+# Extracting exceptions from goods_score
+outliers_goods_score <- detect_outliers(data, "goods_score")
+
+
+# Plotting a Scatter Plot of Price Outliers
+ggplot(outliers_price, aes(x = seq_along(price), y = price)) +
+  geom_point(color = "red") +
+  labs(title = "Outliers in Price", x = "Index", y = "Price")
+
+# Plotting a Scatter Plot of Comment Number Anomalies
+ggplot(outliers_comment, aes(x = seq_along(comment_num), y = comment_num)) +
+  geom_point(color = "blue") +
+  labs(title = "Outliers in Comment Number", x = "Index", y = "Comment Number")
+
+# Plotting a Scatter Plot of Goods Score Outliers
+ggplot(outliers_goods_score, aes(x = seq_along(goods_score), y = goods_score)) +
+  geom_point(color = "orange") +
+  labs(title = "Outliers in Goods Score", x = "Index", y = "Goods Score")
+
+```
+```{r}
+cat("Number of outliers in price:", nrow(outliers_price), "\n")
+cat("Number of outliers in comment_num:", nrow(outliers_comment), "\n")
+cat("Number of outliers in goods_score:", nrow(outliers_goods_score), "\n")
+```
+
+
+
+2.3.2 log transformation
+
+comment_num vs. log(sales_volume):
+The plot indicates a positive association between the number of comments and the logarithm of sales volume. Products with more comments generally tend to have higher sales volume, but there is substantial variance at higher comment levels.
+
+goods_score vs. log(sales_volume):
+A positive trend is evident, with higher goods scores associated with increased sales volume (in log scale). However, the variability suggests that other factors may also influence sales volume.
+
+price vs. log(sales_volume):
+There is a noticeable negative association, with higher prices generally correlating with lower sales volume. This relationship weakens at higher price levels, possibly due to fewer data points or niche markets for expensive products.
+```{r}
+data %>%
+  pivot_longer(cols = c(price, comment_num, goods_score), names_to = "xname", values_to = "x") %>%
+  ggplot(aes(x = x, y = log(sales_volume))) +
+  geom_point() +
+  facet_wrap(~xname, ncol = 2, scales = "free") +
+  labs(title = "Relationships between Variables and Sales Volume",
+       x = "Variable Value",
+       y = "Log(Sales Volume)")
+
+```
+
+
+2.3.3 log transformed
+
+The figure shows the difference in the relationship between Log(Price) and Log(Sales Volume) by Level 2 Category. The main findings are as follows:
+
+```{r}
+ggplot(filtered_data, aes(x = log(price + 1), y = log(sales_volume + 1), color = leve_2_category_name)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Log-Transformed Price vs Sales Volume by Level 2 Category",
+       x = "Log(Price)", y = "Log(Sales Volume)", color = "Level 2 Category") +
+  theme_minimal()
+```
+2.3.4 grouped
+
+This figure shows the relationship between price and sales for the Level 2 category within the different Level 1 categories.
+
+
+In most cases, price is negatively correlated with sales, i.e. the higher the price, the lower the sales.
+Each subfigure clearly demonstrates the difference in the distribution of secondary categories within the different primary categories.
+
+
+```{r}
+ggplot(filtered_data, aes(x = price, y = sales_volume, color = leve_2_category_name)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ leve_2_category_name, scales = "free") +
+  labs(title = "Price vs Sales Volume by Level 2 Category (Grouped by Level 2 Category)",
+       x = "Price", y = "Sales Volume", color = "Level 2 Category") +
+  theme_minimal()
+
+```
+
+2.4 score rating
+
+Some categories, such as "Cleaning Supplies" and "Phone Cases & Screen Protector," show sharper increases in sales volume at higher goods scores. In contrast, others, like "Foot, Hand & Nail Care," exhibit relatively flat trends, indicating less sensitivity of sales volume to goods scores in these categories.
+
+Outliers:
+Certain categories, such as "Girl's Sets," show extreme sales volume for high goods scores, indicating popular products or high-demand items within that category. These outliers might skew trends.
+
+```{r}
+ggplot(filtered_data, aes(x = goods_score, y = sales_volume, color = leve_2_category_name)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Goods Score vs Sales Volume for Top 20 Level 2 Categories",
+       x = "Goods Score", y = "Sales Volume", color = "Level 2 Category") +
+  theme_minimal()
+```
+
+
+
+2.5 lv1 category
+
+The bar chart shows the distribution of the number of items in each level of category. The categories “Clothing” and “Accessories” have the highest number of items, which is significantly higher than the other categories, while categories such as “Appliances” and “Plus” have a lower number of items. This suggests that goods are not evenly distributed among the first-level categories, and that the impact of categories needs to be taken into account in the analysis.
+
+
+
+
+```{r}
+# Level 2 categroy counts eda 
+category_counts <- data %>%
+  count(leve_2_category_name, name = "category_count")
+ggplot(data, aes(x=leve_1_category_name))+
+  geom_bar()+
+  labs(title= "lv1 category", x="category",y="numbers")+
+    theme(axis.text.x= element_text(angle=90, hjust=1)
+  )
+```
+2.5 Sales Revenue
+
+group by level1 and level 2 category
+
+```{r}
+revenue_level1 <- data %>%
+  group_by(leve_1_category_name) %>%
+  summarise(total_revenue = sum(revenue, na.rm = TRUE)) %>%
+  ungroup()
+# level2 sales revenue
+revenue_level2 <- data %>%
+  group_by(leve_2_category_name) %>%
+  summarise(total_revenue = sum(revenue, na.rm = TRUE)) %>%
+  ungroup() 
+```
+
+
+
+2.5.1.  lv1 revenue distribution
+```{r}
+top_revenue_level1 <- revenue_level1 %>%
+  top_n(5, total_revenue)
+# Income distribution by primary category
+ggplot(top_revenue_level1, aes(x = reorder(leve_1_category_name, total_revenue), y = total_revenue)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Revenue Top5 on lv1 category", x = "Lv1 Category", y = "Revenue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+2.5.3 lv2 distribution
+
+```{r}
+top_revenue_level2 <- revenue_level2 %>%
+  top_n(5, total_revenue)
+# Revenue Top5 on lv2 category
+ggplot(top_revenue_level2, aes(x = reorder(leve_2_category_name, total_revenue), y = total_revenue)) +
+  geom_bar(stat = "identity", fill = "red") +
+  labs(title = "Revenue TOP5 on lv2 category ", x = "Lv2 category", y = "Revenue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+
+3 Model Building 
+
+
+```{r}
+# Extract names of Top5 categories from top_revenue_level2
+top5_categories <- unlist(top_revenue_level2$leve_2_category_name, use.names = FALSE)
+
+# Ensure that the raw data columns are character-based
+data$leve_2_category_name <- as.character(data$leve_2_category_name)
+
+# Extract data belonging to the Top5 categories from the raw data
+top5_data <- data %>%
+  filter(leve_2_category_name %in% top5_categories)
+
+# Ensure that all variables (e.g., sales_volume and price) are non-missing and numeric
+top5_data <- top5_data %>%
+  filter(!is.na(sales_volume) & !is.na(price)) %>%
+  mutate(
+    sales_volume = as.numeric(sales_volume),
+    price = as.numeric(price)
+  )
+
+```
+
+
+
+Residual Distribution.
+
+The large range of residuals (-1588 to 38475) indicates that the model underperforms on high-volume items.
+The low significance of the multinomial leve_2_category_name may indicate the presence of multicollinearity or noise interference in the category variable.
+Key Variables.
+
+price: for each unit increase, sales decrease  4.39
+4.39 units (significant, p-value < 2e-16).
+high_score: not significant, indicating that whether an item is highly rated or not has limited contribution to sales prediction.
+Significant categories: e.g. Adhesives & Sealants (positive effect), Cleaning Supplies (positive effect).
+Model Performance.
+
+3.1 linear model
+
+```{r}
+model_lm <- lm(sales_volume ~ price + high_score + leve_1_category_name + leve_2_category_name + comment_num , data = data)
+
+# Output Model Summary
+summary(model_lm)
+```
+
+
+Residual Analysis.
+
+The smallest residual, -1623.4, indicates that the model's prediction of some data is highly biased.
+The wide range of residuals (-1623.4 to 25724.7) indicates that outliers of high volume items have a significant impact on the model fit.
+Interpretation of variables.
+
+PRICE: Price significantly and negatively affects sales volume, with sales volume decreasing for each unit increase in price  25.43 units (p < 2e-16).
+
+
+comment_num: number of comments has a significant positive effect on sales (p < 2e-16).
+Some categories (e.g. Men's Shoes and Storage & Organization) significantly and positively affect sales, but others (e.g. Girl's Sets and Kitchen & Dining) do not.
+
+3.1.2
+```{r}
+
+
+model_lm1 <- lm(sales_volume ~ price + high_score + leve_2_category_name + comment_num , data = top5_data)
+
+# summary output
+summary(model_lm1)
+
+```
+3.1.3
+With high_score and comment num remove to compare to previous model
+
+The r^2 explains less, indicating that high_score and comment num do influence users' purchase options
+```{r}
+model_lm2 <- lm(sales_volume ~ price +  leve_2_category_name  , data = top5_data)
+
+summary(model_lm2)
+
+```
+
+In the data, high volume items (outliers) have a significant impact on the model fit
+
+
+Improve the distribution of the data to be closer to a normal distribution
+High-volume data tends to be right-skewed (positively skewed distribution), i.e., most items have low volume, but a few items have extremely high volume.
+A logarithmic transformation will flatten the right-skewed data and bring its distribution closer to normal.
+This is a basic assumption of linear regression: the residuals should be close to a normal distribution.
+
+
+3.1.4
+```{r}
+model_lm3 <- lm(log(sales_volume) ~ price +  leve_2_category_name  , data = top5_data)
+
+
+summary(model_lm3)
+```
+
+
+
+3.1.5 qqplot
+
+The QQ plot of the residuals shows that the distribution of the residuals of the original model is skewed away from normal, while the logarithmic transformation brings the residuals closer to the normal distribution.
+
+```{r}
+# QQ Plot
+model_residuals <- residuals(model_lm3)
+qqnorm(model_residuals)
+qqline(model_residuals, col = "red", lwd = 2)
+```
+
+The model effectively captures the impact of price, category, ratings and number of reviews on item sales and reveals the following trends:
+
+Price is a significant negative driver of sales volume.
+There is a significant difference in sales volume performance across merchandise categories.
+The number of reviews plays a limited role, while the direction of ratings' impact on sales deserves further exploration.
+However, the applicability of the Poisson regression model is limited by the excessive discretization of the sales data, and it is recommended that the model be adjusted to better cope with the characteristics of the data.
+
+
+3.2 poisson
+```{r}
+# GLM Model: Poisson Regression Predicts Sales Volume
+model_glm <- glm(sales_volume ~ price + leve_2_category_name + goods_score + comment_num , data = top5_data, family = poisson())
+
+
+summary(model_glm)
+
+```
+```{r}
+model_residuals1 <- residuals(model_glm)
+qqnorm(model_residuals1)
+qqline(model_residuals1, col = "red", lwd = 2)
+```
+
+
+
+
+3.3 gamma
+
+The glm.nb model has certain requirements for the value of the target variable (sales_volume). If sales_volume contains zero, negative or extreme outliers, the model may not converge.
+
+However, extreme values are the main focus of our study, so we cannot use nb and will try to use a gamma model.
+
+
+
+Gamma models have smaller residual variance, smoother fit and less sensitivity to outliers.
+Looking at the ratio of Residual deviance to Null deviance, the Gamma model seems to have more explanatory power.
+AIC Comparison.
+
+The AIC value of the Gamma model (63863) is higher than that of the Poisson model, but this may be due to a better match between the model assumptions and data characteristics.
+Lower AIC values indicate a better model fit, but AIC comparisons require that the model assumptions are identical; Poisson and Gamma are different distributions, so comparing AICs alone may not be sufficient to draw conclusions.
+
+```{r}
+model_gamma <- glm(sales_volume ~ price + leve_2_category_name + goods_score + comment_num,
+                   data = top5_data, family = Gamma(link = "log"))
+summary(model_gamma)
+
+```
+```{r}
+model_residuals2 <- residuals(model_gamma)
+qqnorm(model_residuals2)
+qqline(model_residuals2, col = "red", lwd = 2)
+```
+
+
+
+3.4 quasi poisson
+
+Why choose the Quasi-Poisson model?
+The Poisson model assumes that the mean and variance of the data are equal (mean square equals variance). However, in practice, when the data exhibit **overdispersion**, the Poisson model underestimates the variance, leading to incorrect standard errors and hypothesis testing results.
+The Quasi-Poisson model relaxes this assumption by introducing a **Dispersion Parameter** that allows the model to accommodate variance greater than the mean.
+
+
+The Dispersion Factor is 3480.231, which indicates that there is indeed a strong over-dispersion in the data.
+The Quasi-Poisson model is better able to cope with this problem, whereas the Poisson model may underestimate the variance, thus affecting the results of the significance test.
+
+
+The Quasi-Poisson model is better at coping with overdispersion than the previous Poisson model, especially when dealing with the effect of high sales volume items on the overall data distribution. Based on the available data and analytical goals, Quasi-Poisson is a reasonable choice, but in the future it can be combined with outlier analysis or more sophisticated models to further optimize predictive performance.
+
+Quasi-Poisson is suitable for count data analysis, but is less capable of handling outliers and may not be the best choice for current data
+```{r}
+
+# Fitting the Quasi-Poisson Model
+model_quasi <- glm(sales_volume ~ price + leve_2_category_name + goods_score + comment_num , 
+                   family = quasipoisson(), 
+                   data = top5_data)
+
+summary(model_quasi)
+
+
+```
+```{r}
+model_residuals3 <- residuals(model_quasi)
+qqnorm(model_residuals3)
+qqline(model_residuals3, col = "red", lwd = 2)
+```
+
+
+
+
+
+3.5 linear mixed effecet
+
+The inclusion of level_2_category_name as a random effect is justified by accounting for unobserved heterogeneity between categories
+
+
+Even after accounting for fixed effects, the random intercept highlights differences in sales volume between categories. For example Categories such as Kitchen and Catering perform worse than average.
+
+```{r}
+
+model_lmer <- lmer(sales_volume ~ price  + high_score + comment_num + (1 | leve_2_category_name), data = top5_data)
+
+# Extracting random effects
+summary(model_lmer)
+```
+3.5.1 randon intercet
+
+High RI and high revenue categories (e.g., Men's Shoes and Storage & Organization) are stable, with high baseline sales and high revenue, and can maintain current strategies and enhance them further.
+
+Low RI but high revenue categories (e.g., Kitchen & Dining), despite low baseline volume, are generating high revenue through high unit prices or other factors, and need to focus on optimizing pricing strategies and strengthening promotions to further increase volume.
+
+Low random intercept and low-income categories (e.g., Girl's Dresses and Girl's Sets) are deficient in both baseline volume and market performance, and could be made more competitive through promotion or price optimization.
+
+The overall recommendation is to develop targeted strategies to maximize market performance and revenue based on category differences in baseline sales and total revenue.
+
+
+```{r}
+random_effects <- ranef(model_lmer)$leve_2_category_name %>%
+  as.data.frame() %>%
+  mutate(Category = rownames(ranef(model_lmer)$leve_2_category_name))
+
+# Check the result
+head(random_effects)
+
+ggplot(random_effects, aes(x = reorder(Category, `(Intercept)`), y = `(Intercept)`)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Random Effect by Category",
+       x = "Category",
+       y = "Random Intercept") +
+  theme_minimal()
+
+```
+
+3.5.2
+```{r}
+model_lmer1 <- lmer(sales_volume ~ price  + high_score + (1 | comment_num) + (1 | leve_2_category_name), data = top5_data)
+
+# Extracting random effects
+summary(model_lmer1)
+
+
+```
+
+
+3.5.2
+
+Loweast REML 
+
+
+Add (1 | Price) to explain for the fact that the variability in sales volume may vary significantly across price points
+```{r}
+model_lmer2 <- lmer(sales_volume ~ (1 | price ) + high_score +  comment_num + (1 | leve_2_category_name), data = top5_data)
+
+# Extracting random effects
+summary(model_lmer2)
+
+
+```
+
+
+
+
+
+
+
+
+
+
